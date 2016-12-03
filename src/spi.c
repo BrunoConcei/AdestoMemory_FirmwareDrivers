@@ -32,6 +32,7 @@
  ******************************************************************************/
 #include "em_cmu.h"
 #include "em_emu.h"
+#include "em_gpio.h"
 #include "em_int.h"
 #include "em_usart.h"
 
@@ -554,6 +555,41 @@ void spi_init(int bit_rate)
 	// register (but don't enable) rx pin GPIO interrupt
 	gpio_irq_handler_install(RX_PORT, RX_PIN, SO_IRQ, NULL);
 	}
+
+/***************************************************************************//**
+ * @brief
+ *   SPI/USART Deinitialization
+ ******************************************************************************/
+void spi_term()
+{
+	CMU_ClockEnable(cmuClock_GPIO, true);
+	gpio_init(spi_pins, sizeof(spi_pins)/sizeof(gpio_init_t));
+
+	NVIC_DisableIRQ(SPI_TX_IRQn);
+	NVIC_DisableIRQ(SPI_RX_IRQn);
+	USART_Enable(SPI_PORT, false);
+	SPI_PORT->ROUTE = 0;
+	CMU_ClockEnable(SPI_cmuClock, false);
+}
+
+/***************************************************************************//**
+ * @brief
+ *   SPI/USART signal manual control ("bit-banging")
+ *
+ * @param[in] cs
+ * 		SPI chip select signal level, 0 is asserted
+ * @param[in] sck
+ * 		SPI clock signal level
+ * @param[in] mosi
+ * 		SPI MOSI (Master Out/Slave In) data signal level
+ ******************************************************************************/
+void spi_set_signals(int cs, int sck, int mosi)
+{
+	GPIO_PortOutSetVal(CS_PORT, cs   << CS_PIN, 1 << CS_PIN);
+	GPIO_PortOutSetVal(CK_PORT, sck  << CK_PIN, 1 << CK_PIN);
+	GPIO_PortOutSetVal(TX_PORT, mosi << TX_PIN, 1 << TX_PIN);
+}
+
 
 /** @} (end addtogroup Peripheral Functions) */
 /** @} (end addtogroup spi) */

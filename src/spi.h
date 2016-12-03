@@ -82,6 +82,10 @@ void spi_wait_so(uint8_t level,
 
 void spi_init(int bit_rate);
 
+void spi_term();
+
+void spi_set_signals(int cs, int sck, int mosi);
+
 /** @} (end addtogroup Peripheral Functions) */
 /** @} (end addtogroup SPI) */
 

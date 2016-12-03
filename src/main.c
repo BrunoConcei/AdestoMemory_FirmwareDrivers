@@ -470,7 +470,6 @@ void test_start(void)
 	// delay 50ms
 	delay(50);
 	// wake part up
-	spiflash_ultra_deep_power_down(false, NULL, NULL);		//XXX verify if we need both of these...?
 	spiflash_ultra_deep_power_down(false, NULL, NULL);
 
 	// Necessary for erase and write commands.

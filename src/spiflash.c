@@ -215,8 +215,14 @@ const spiflash_info_t spiflash_info_table[] =
 	},
 	[RM25C256DS] = {
 		.name                    = "RM25C256DS",
-		.id_size                 = 3,
-		.id_bytes                = { 0x7f, 0x7f, 0x7f },
+		.id_size                 = 10,
+		.id_bytes                = { 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x43, 0xff, 0xff },
+		// The RM25C256 datasheet dated November 2016 doesn't specify that the ID command at
+		// all, but it does respond with the JEDEC-assigned manufacturer ID for Adesto, followed
+		// by at least two 0xff bytes. It is unclear whether the 0xff bytes are intended to be
+		// a part ID; it is hoped that the manufacturer's future parts will return values other
+		// than 0xff 0xff after the manufacturer ID, to allow them to be distinguished from
+		// this part.
 		.device_size             = (256 << 10) / 8,
 	    .address_bytes           = 2,
 		.program_page_size       = 64,
@@ -236,14 +242,16 @@ const spiflash_info_t spiflash_info_table[] =
   	    .status_busy_level       = 0x01,
   	    .has_so_irq              = false,
   	    .dataflash               = false,
-  	    .read_slow               = true,  // RM25C256DS seems to acutally support the 0x0b READ ARRAY command, but
+  	    .read_slow               = true,  // RM25C256DS seems to actually support the 0x0b READ ARRAY command, but
   	                                      // it's not documented, so we shouldn't use it.
+  	    .udpd_wake_reset         = true,  // need special reset sequence to wake from ultra-deep power-down
 	},
 };
 
 #define SPIFLASH_INFO_TABLE_SIZE (sizeof(spiflash_info_table) / sizeof(spiflash_info_t))
 
 
+static int spiflash_bit_rate;
 
 static const spiflash_info_t *spiflash_info;
 static bool spiflash_use_so_irq;
@@ -1387,11 +1395,60 @@ void spiflash_ultra_deep_power_down(bool power_down,
 		                            spiflash_completion_fn_t *completion,
 	                                void *completion_ref)
 {
-	// any command can be used to resume; device will otherwise ignore the cmd
-	spiflash_single_byte_command(power_down ? CMD_ULTRA_DEEP_POWER_DOWN : CMD_RESUME_FROM_DEEP_POWER_DOWN,
-			                     0, NULL,  // rx
-			                     completion,
-			                     completion_ref);
+	if (power_down)
+	{
+		spiflash_single_byte_command(CMD_ULTRA_DEEP_POWER_DOWN,
+									 0, NULL,  // rx
+			                         completion,
+			                         completion_ref);
+	}
+	else if ((! spiflash_info) || spiflash_info->udpd_wake_reset)
+	{
+		// RM25C256 will only wake from ultra-deep power down with a
+		// special reset sequence, which requires pulsing chip
+		// select four times, with minimum width Tcl (100ns) and
+		// minimum delay between assertions of Tch (100ns). SCK must
+		// be inactive during the entire operation, but may be high or low.
+		// SDI must be 0, 1, 0, 1 on the rising edge of the four
+		// CS pulses.  The chip will be ready Txupd (unspecified in
+		// RM25C256 data sheet dated November 2016) after the end
+		// of the fourth CS pulse.
+		// We're going to do this synchronously, even if the caller
+		// has provided a completion routine; in that case the caller's
+		// completion routine will always be called before this
+		// function returns.
+		spi_term();
+
+		int i;
+		for (i = 0; i < 4; i++)
+		{
+			//              CS CLK DI
+			spi_set_signals(1, 1,  i & 1);
+			spi_set_signals(0, 1,  i & 1);
+			spi_set_signals(1, 1,  i & 1);
+		}
+
+		spi_init(spiflash_bit_rate);
+	}
+	else
+	{
+		// Waking from ultra-deep power down only requires asserting then
+		// deasserting the chip select with a minimum pulse width (e.g.,
+		// Tclsu min 20ns for AT25XE041B), then waiting a minimum recovery time
+		// (e.g, Txudpd min 70us for AT25XE041B).  A dummy command may be sent
+		// while chip select is asserted, but the device will ignore it.
+		// We arbitrarily choose the RESUME_FROM_DEEP_POWER_DOWN command,
+		// because it will be a no-op if the chip is already awake.
+
+		spiflash_completion = completion;
+		spiflash_completion_ref = completion_ref;
+
+		spiflash_single_byte_command(CMD_ULTRA_DEEP_POWER_DOWN,
+									 0, NULL,  // rx
+			                         completion,
+			                         completion_ref);
+
+	}
 }
 
 /***************************************************************************//**
@@ -1482,13 +1539,18 @@ spiflash_id_t spiflash_init(int bit_rate)
 	int i;
 	const spiflash_info_t *p;
 
-	spi_init(bit_rate);
-	spiflash_busy = false;
 	spiflash_info = NULL;
+	spiflash_busy = false;
+
+	spiflash_bit_rate = bit_rate;  // save for possible later use when waking flash chip
+	                               // from ultra-deep power down (needed for RM25C256)
+	spi_init(spiflash_bit_rate);
 
 	// issue a resume from deep power down synchronously
-	spiflash_deep_power_down(false, NULL, NULL);
-	spiflash_deep_power_down(false, NULL, NULL);
+	// since we don't yet know the device type (spiflash_info == NULL),
+	// this will have to use the four CS-pulse wake sequence required by
+	// the RM25C256
+	spiflash_ultra_deep_power_down(false, NULL, NULL);
 
 	// issue a read ID command synchronously
 	spiflash_read_id(MAX_FLASH_ID_LEN, spiflash_scratch_buf, NULL, NULL);

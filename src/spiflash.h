@@ -59,7 +59,14 @@ typedef enum
 	PART_UNKNOWN
 } spiflash_id_t;
 
-#define MAX_FLASH_ID_LEN 8
+// Flash ID is returned by READ_ID command (9F), and consists
+// of the manufacturer identification code followed by
+// manufacturer-specific part identification.
+// The manufacturer identification code are assigned by JEDEC (in
+// JEDEC standard JEP106, JEP106AT as of September 2016), and
+// consists of a series of zero or more 7F bytes, followed by a
+// one byte vendor ID,
+#define MAX_FLASH_ID_LEN 12
 
 typedef struct
 {
@@ -95,6 +102,9 @@ typedef struct
 	bool has_so_irq;
 	bool dataflash;     // if true, part has 256 byte and 264 byte page capability
 	uint8_t so_done_level;  // level expected on SO when operation done, when using active status interrupt
+
+	bool udpd_wake_reset;  // if true, use special hardware reset sequence
+	                       // to wake from ultra-deep power-down mode
 } spiflash_info_t;
 
 extern const spiflash_info_t spiflash_info_table[];
